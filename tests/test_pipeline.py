@@ -9,7 +9,7 @@ import torch
 from transformers import AutoTokenizer, DynamicCache, QuantizedCache
 from transformers.utils import is_flash_attn_2_available, is_hqq_available, is_optimum_quanto_available
 
-from kvpress import ExpectedAttentionPress, KVzipPress
+from kvpress import DMSPress, ExpectedAttentionPress, KnormPress, KVzipPress
 from kvpress.pipeline import KVPressTextGenerationPipeline
 from tests.fixtures import danube_500m_model  # noqa: F401
 from tests.fixtures import kv_press_danube_pipeline  # noqa: F401
@@ -163,6 +163,20 @@ def test_pipeline_with_quantized_cache_multiple_questions(backend, kv_press_danu
     for question, answer in zip(questions, answers):
         single = kv_press_danube_pipeline(context, question=question, press=press, cache=make_cache())["answer"]
         assert answer == single
+
+
+def test_pipeline_dms_decoding_rejects_multiple_questions(kv_press_unit_test_pipeline):  # noqa: F811
+    # The masks DMSPress adds while answering a question are not undone before the next one
+    context = "This is a test article. It was written on 2022-01-01. " * 10
+    questions = ["When was this article written?", "Who wrote it?"]
+
+    press = DMSPress(KnormPress(), threshold=float("inf"), sliding_window_size=4, decoding=True)
+    with pytest.raises(ValueError, match="multiple questions"):
+        kv_press_unit_test_pipeline(context, questions=questions, press=press, max_new_tokens=5)
+
+    press = DMSPress(KnormPress(), threshold=float("inf"), sliding_window_size=4, decoding=False)
+    answers = kv_press_unit_test_pipeline(context, questions=questions, press=press, max_new_tokens=5)["answers"]
+    assert len(answers) == 2
 
 
 def test_pipeline_compresses_context(unit_test_model, caplog):  # noqa: F811

@@ -421,8 +421,8 @@ class EvaluationRunner:
 
         self.df["predicted_answer"] = None  # type: ignore[index]
 
-        if isinstance(self.press, DecodingPress):
-            logger.info("DecodingPress detected, running inference for each context-question pair.")
+        if isinstance(self.press, DecodingPress) or (isinstance(self.press, DMSPress) and self.press.decoding):
+            logger.info("Decoding compression detected, running inference for each context-question pair.")
             for index, row in tqdm(self.df.iterrows(), total=len(self.df), desc="Running Inference"):
                 context = row["context"]
                 question = row["question"]
