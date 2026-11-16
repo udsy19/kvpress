@@ -9,7 +9,14 @@ import torch
 from transformers import AutoTokenizer, DynamicCache, QuantizedCache
 from transformers.utils import is_flash_attn_2_available, is_hqq_available, is_optimum_quanto_available
 
-from kvpress import ExpectedAttentionPress, KVzipPress
+from kvpress import (
+    ComposedPress,
+    ExpectedAttentionPress,
+    KeyRerotationPress,
+    KnormPress,
+    KVzipPress,
+    PrefillDecodingPress,
+)
 from kvpress.pipeline import KVPressTextGenerationPipeline
 from tests.fixtures import danube_500m_model  # noqa: F401
 from tests.fixtures import kv_press_danube_pipeline  # noqa: F401
@@ -163,6 +170,31 @@ def test_pipeline_with_quantized_cache_multiple_questions(backend, kv_press_danu
     for question, answer in zip(questions, answers):
         single = kv_press_danube_pipeline(context, question=question, press=press, cache=make_cache())["answer"]
         assert answer == single
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda press: press,
+        lambda press: ComposedPress([press]),
+        lambda press: PrefillDecodingPress(prefilling_press=press),
+    ],
+)
+def test_pipeline_question_follows_rerotated_keys(kv_press_unit_test_pipeline, monkeypatch, wrap):  # noqa: F811
+    # Rerotated keys sit at positions 0..n_kept-1, so the question must start right after them
+    pipe = kv_press_unit_test_pipeline
+    context_lengths, cache_lengths = [], []
+    generate_answer = pipe.generate_answer
+
+    def recording_generate_answer(question_ids, cache, context_length, max_new_tokens):
+        context_lengths.append(context_length)
+        cache_lengths.append(cache.get_seq_length())
+        return generate_answer(question_ids, cache, context_length, max_new_tokens)
+
+    monkeypatch.setattr(pipe, "generate_answer", recording_generate_answer)
+    context = "This is a test article. It was written on 2022-01-01. " * 10
+    pipe(context, question="When was this article written?", press=wrap(KeyRerotationPress(KnormPress(0.5))))
+    assert context_lengths == cache_lengths
 
 
 def test_pipeline_compresses_context(unit_test_model, caplog):  # noqa: F811

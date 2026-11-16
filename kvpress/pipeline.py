@@ -12,6 +12,7 @@ from transformers.pipelines import PIPELINE_REGISTRY
 from transformers.pipelines.base import GenericTensor
 
 from kvpress.presses.base_press import BasePress
+from kvpress.presses.composed_press import ComposedPress
 from kvpress.presses.decoding_press import DecodingPress
 from kvpress.presses.dms_press import DMSPress
 from kvpress.presses.finch_press import FinchPress
@@ -234,7 +235,7 @@ class KVPressTextGenerationPipeline(Pipeline):
             # Greedy decoding for each question
             answers = []
             for question_ids in input_tensors["questions_ids"]:
-                if isinstance(press, KeyRerotationPress) or (isinstance(press, FinchPress) and press.rerotate_keys):
+                if self._rerotates_keys(press):
                     context_length = cache.get_seq_length()
 
                 cache_seq_lengths = [cache.get_seq_length(layer_idx) for layer_idx in range(len(cache))]
@@ -252,6 +253,14 @@ class KVPressTextGenerationPipeline(Pipeline):
 
                 answers.append(answer)
         return answers
+
+    def _rerotates_keys(self, press: Optional[BasePress]) -> bool:
+        """Whether the press, or a press it wraps, moves the kept keys to positions 0..n_kept-1"""
+        if isinstance(press, ComposedPress):
+            return any(self._rerotates_keys(p) for p in press.presses)
+        if isinstance(press, PrefillDecodingPress):
+            return self._rerotates_keys(press.prefilling_press)
+        return isinstance(press, KeyRerotationPress) or (isinstance(press, FinchPress) and press.rerotate_keys)
 
     def _remove_answer_from_cache(
         self, cache: Cache, cache_seq_lengths: list[int], layer_states: Optional[list[dict]] = None
